@@ -1,0 +1,8 @@
+## Interface: 120000, 120001
+## Title: BetterXP
+## Notes: Enhanced experience bar showing remaining XP as percentage and exact number.
+## Author: You
+## Version: 1.0.0
+## SavedVariables: BetterXPDB
+
+BetterXP.lua
