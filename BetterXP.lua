@@ -36,6 +36,12 @@ bar:SetPoint("TOPLEFT")
 bar:SetPoint("BOTTOMLEFT")
 bar:SetColorTexture(0.6, 0.2, 0.8, 0.9)
 
+-- Quest XP bar fill (orange, shown after main bar)
+local questBar = frame:CreateTexture(nil, "ARTWORK", nil, 1)
+questBar:SetPoint("TOPLEFT", bar, "TOPRIGHT")
+questBar:SetPoint("BOTTOMLEFT", bar, "BOTTOMRIGHT")
+questBar:SetColorTexture(1.0, 0.6, 0.0, 0.7)
+
 -- Rested XP bar fill (shown behind main bar)
 local restedBar = frame:CreateTexture(nil, "BORDER")
 restedBar:SetPoint("TOPLEFT", bar, "TOPRIGHT")
@@ -43,9 +49,12 @@ restedBar:SetPoint("BOTTOMLEFT", bar, "BOTTOMRIGHT")
 restedBar:SetColorTexture(0.2, 0.4, 0.8, 0.5)
 
 -- Text overlay
-local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+local text = frame:CreateFontString(nil, "OVERLAY")
+text:SetFont(GameFontNormal:GetFont(), 13, "OUTLINE")
 text:SetPoint("CENTER")
 text:SetTextColor(1, 1, 1, 1)
+text:SetShadowOffset(1, -1)
+text:SetShadowColor(0, 0, 0, 0.8)
 
 -- Time tracking
 local sessionStartTime = GetTime()
@@ -70,6 +79,21 @@ local function FormatNumber(n)
     return tostring(n)
 end
 
+local function GetTotalQuestXP()
+    local totalXP = 0
+    for i = 1, C_QuestLog.GetNumQuestLogEntries() do
+        local info = C_QuestLog.GetInfo(i)
+        if info and not info.isHeader and not info.isHidden then
+            local questID = info.questID
+            if questID and C_QuestLog.IsComplete(questID) then
+                local xp = GetQuestLogRewardXP(questID)
+                totalXP = totalXP + xp
+            end
+        end
+    end
+    return totalXP
+end
+
 local function UpdateBar()
     if UnitLevel("player") == GetMaxLevelForPlayerExpansion() then
         frame:Hide()
@@ -87,11 +111,26 @@ local function UpdateBar()
     local barWidth = math.max(1, (currentXP / maxXP) * frame:GetWidth())
     bar:SetWidth(barWidth)
 
-    -- Rested bar
+    -- Quest XP bar
+    local questXP = GetTotalQuestXP()
+    if questXP > 0 then
+        local questWidth = math.min(questXP, remainingXP) / maxXP * frame:GetWidth()
+        questBar:SetWidth(math.max(1, questWidth))
+        questBar:Show()
+    else
+        questBar:Hide()
+    end
+
+    -- Rested bar (capped to remaining space after quest XP)
     if restedXP > 0 then
-        local restedWidth = math.min(restedXP, remainingXP) / maxXP * frame:GetWidth()
-        restedBar:SetWidth(math.max(1, restedWidth))
-        restedBar:Show()
+        local restedAvail = math.max(0, remainingXP - questXP)
+        local restedWidth = math.min(restedXP, restedAvail) / maxXP * frame:GetWidth()
+        if restedWidth > 0 then
+            restedBar:SetWidth(math.max(1, restedWidth))
+            restedBar:Show()
+        else
+            restedBar:Hide()
+        end
     else
         restedBar:Hide()
     end
@@ -109,15 +148,20 @@ local function UpdateBar()
         ttlText = string.format("  |cFFFFD200TTL: %s|r", FormatTime(math.floor(ttlSeconds)))
     end
 
-    -- Text: percentage + remaining + time on level + TTL
+    -- Text: percentage + remaining + quest XP + rested + TTL
+    local questText = ""
+    if questXP > 0 then
+        questText = string.format("  |cFFFF9900(+%s quests)|r", FormatNumber(questXP))
+    end
+
     local restedText = ""
     if restedXP > 0 then
         restedText = string.format("  |cFF4488FF(+%s rested)|r", FormatNumber(restedXP))
     end
 
     text:SetText(string.format(
-        "%.1f%%  —  %s / %s  (%s remaining)%s%s  |cFFAAAAAAT: %s|r",
-        pct, FormatNumber(currentXP), FormatNumber(maxXP), FormatNumber(remainingXP), restedText, ttlText, FormatTime(math.floor(levelTime))
+        "%.1f%%  —  %s / %s  (%s remaining)%s%s%s  |cFFAAAAAAT: %s|r",
+        pct, FormatNumber(currentXP), FormatNumber(maxXP), FormatNumber(remainingXP), questText, restedText, ttlText, FormatTime(math.floor(levelTime))
     ))
 end
 
@@ -126,6 +170,7 @@ frame:RegisterEvent("PLAYER_LEVEL_UP")
 frame:RegisterEvent("UPDATE_EXHAUSTION")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("ADDON_LOADED")
+frame:RegisterEvent("QUEST_LOG_UPDATE")
 frame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == "BetterXP" then
         BetterXPDB = BetterXPDB or {}
@@ -220,6 +265,10 @@ frame:SetScript("OnEnter", function(self)
     GameTooltip:AddDoubleLine("Remaining:", string.format("%s (%.1f%%)", remainingXP, 100 - pct), 1,1,1, 1,0.82,0)
     if restedXP > 0 then
         GameTooltip:AddDoubleLine("Rested XP:", tostring(restedXP), 1,1,1, 0.2,0.4,1)
+    end
+    local questXP = GetTotalQuestXP()
+    if questXP > 0 then
+        GameTooltip:AddDoubleLine("Quest XP (ready):", FormatNumber(questXP), 1,1,1, 1,0.6,0)
     end
     GameTooltip:AddDoubleLine("Level:", tostring(UnitLevel("player")), 1,1,1, 1,0.82,0)
     local elapsed = GetTime() - sessionStartTime
