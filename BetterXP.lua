@@ -2,7 +2,7 @@
 BetterXPDB = BetterXPDB or {}
 
 local frame = CreateFrame("Frame", "BetterXPFrame", UIParent)
-frame:SetSize(600, 18)
+frame:SetSize(800, 30)
 frame:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 2)
 frame:SetFrameStrata("HIGH")
 frame:SetClampedToScreen(true)
@@ -43,9 +43,23 @@ restedBar:SetPoint("BOTTOMLEFT", bar, "BOTTOMRIGHT")
 restedBar:SetColorTexture(0.2, 0.4, 0.8, 0.5)
 
 -- Text overlay
-local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+local text = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 text:SetPoint("CENTER")
 text:SetTextColor(1, 1, 1, 1)
+
+-- Time tracking
+local sessionStartTime = GetTime()
+local sessionStartXP = 0
+
+local function FormatTime(seconds)
+    if seconds < 60 then
+        return string.format("%ds", seconds)
+    elseif seconds < 3600 then
+        return string.format("%dm %ds", math.floor(seconds / 60), seconds % 60)
+    else
+        return string.format("%dh %dm", math.floor(seconds / 3600), math.floor((seconds % 3600) / 60))
+    end
+end
 
 local function FormatNumber(n)
     if n >= 1e6 then
@@ -82,15 +96,28 @@ local function UpdateBar()
         restedBar:Hide()
     end
 
-    -- Text: percentage + remaining
+    -- Time tracking
+    local elapsed = GetTime() - sessionStartTime
+    local levelTime = (BetterXPDB.levelTime or 0) + elapsed
+    local xpGained = currentXP - sessionStartXP + (BetterXPDB.levelXPGained or 0)
+    local totalElapsed = (BetterXPDB.levelTimeOffset or 0) + elapsed
+
+    local ttlText = ""
+    if xpGained > 0 and totalElapsed > 0 then
+        local xpPerSec = xpGained / totalElapsed
+        local ttlSeconds = remainingXP / xpPerSec
+        ttlText = string.format("  |cFFFFD200TTL: %s|r", FormatTime(math.floor(ttlSeconds)))
+    end
+
+    -- Text: percentage + remaining + time on level + TTL
     local restedText = ""
     if restedXP > 0 then
         restedText = string.format("  |cFF4488FF(+%s rested)|r", FormatNumber(restedXP))
     end
 
     text:SetText(string.format(
-        "%.1f%%  —  %s / %s  (%s remaining)%s",
-        pct, FormatNumber(currentXP), FormatNumber(maxXP), FormatNumber(remainingXP), restedText
+        "%.1f%%  —  %s / %s  (%s remaining)%s%s  |cFFAAAAAAT: %s|r",
+        pct, FormatNumber(currentXP), FormatNumber(maxXP), FormatNumber(remainingXP), restedText, ttlText, FormatTime(math.floor(levelTime))
     ))
 end
 
@@ -111,8 +138,44 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         if BetterXPDB.locked == nil then
             BetterXPDB.locked = false
         end
+        -- Initialize time tracking for this level
+        local currentLevel = UnitLevel("player")
+        if BetterXPDB.trackedLevel ~= currentLevel then
+            -- New level or first time: reset tracking
+            BetterXPDB.trackedLevel = currentLevel
+            BetterXPDB.levelTime = 0
+            BetterXPDB.levelTimeOffset = 0
+            BetterXPDB.levelXPGained = 0
+        end
+        sessionStartTime = GetTime()
+        sessionStartXP = UnitXP("player")
+    elseif event == "PLAYER_LEVEL_UP" then
+        -- Reset time tracking for the new level
+        BetterXPDB.trackedLevel = arg1
+        BetterXPDB.levelTime = 0
+        BetterXPDB.levelTimeOffset = 0
+        BetterXPDB.levelXPGained = 0
+        sessionStartTime = GetTime()
+        sessionStartXP = 0
     end
     UpdateBar()
+end)
+
+-- Save accumulated time when logging out
+local logoutFrame = CreateFrame("Frame")
+logoutFrame:RegisterEvent("PLAYER_LOGOUT")
+logoutFrame:SetScript("OnEvent", function()
+    local elapsed = GetTime() - sessionStartTime
+    BetterXPDB.levelTime = (BetterXPDB.levelTime or 0) + elapsed
+    BetterXPDB.levelTimeOffset = (BetterXPDB.levelTimeOffset or 0) + elapsed
+    BetterXPDB.levelXPGained = (BetterXPDB.levelXPGained or 0) + (UnitXP("player") - sessionStartXP)
+end)
+
+-- Update timer to keep time display current
+local ticker = C_Timer.NewTicker(1, function()
+    if frame:IsShown() then
+        UpdateBar()
+    end
 end)
 
 -- Slash command: /bxp lock
@@ -159,6 +222,18 @@ frame:SetScript("OnEnter", function(self)
         GameTooltip:AddDoubleLine("Rested XP:", tostring(restedXP), 1,1,1, 0.2,0.4,1)
     end
     GameTooltip:AddDoubleLine("Level:", tostring(UnitLevel("player")), 1,1,1, 1,0.82,0)
+    local elapsed = GetTime() - sessionStartTime
+    local levelTime = (BetterXPDB.levelTime or 0) + elapsed
+    local xpGained = currentXP - sessionStartXP + (BetterXPDB.levelXPGained or 0)
+    local totalElapsed = (BetterXPDB.levelTimeOffset or 0) + elapsed
+    GameTooltip:AddDoubleLine("Time on level:", FormatTime(math.floor(levelTime)), 1,1,1, 0.6,0.8,1)
+    if xpGained > 0 and totalElapsed > 0 then
+        local xpPerSec = xpGained / totalElapsed
+        local xpPerHour = xpPerSec * 3600
+        local ttlSeconds = remainingXP / xpPerSec
+        GameTooltip:AddDoubleLine("XP/hour:", FormatNumber(math.floor(xpPerHour)), 1,1,1, 0.6,0.8,1)
+        GameTooltip:AddDoubleLine("Time to level:", FormatTime(math.floor(ttlSeconds)), 1,1,1, 1,0.82,0)
+    end
     GameTooltip:Show()
 end)
 frame:SetScript("OnLeave", GameTooltip_Hide)
